@@ -9,3 +9,6 @@ export type {
 
 // Cesium interfaces
 export type { IBox, IEntity, ILabel, IModel, IPoint, IPolyline } from './cesium';
+
+// Viewer interfaces
+export type { SimConfig, ViewMode } from './viewer';

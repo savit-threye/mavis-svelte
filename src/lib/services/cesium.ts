@@ -14,6 +14,7 @@ export class CesiumService {
         const accessToken = config.accessToken ?? CesiumService.DEFAULT_TOKEN;
         Cesium.Ion.defaultAccessToken = accessToken;
 
+
         CesiumService.viewer = new Cesium.Viewer(container, {
             terrain: Cesium.Terrain.fromWorldTerrain(),
             timeline: true,
@@ -22,6 +23,8 @@ export class CesiumService {
             infoBox: false,
             selectionIndicator: false
         });
+
+        CesiumService.viewer.scene.debugShowFramesPerSecond = true;
 
         return CesiumService.viewer;
     }
