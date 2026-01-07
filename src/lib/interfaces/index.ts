@@ -4,7 +4,11 @@ export type {
     SocketConfig,
     SocketMessage,
     MessageHandler,
-    StatusHandler
+    StatusHandler,
+    IHeaderOption,
+    StaticViewerEntityModel,
+    DynamicEntityModel,
+    ICoordOption
 } from './socket';
 
 // Cesium interfaces

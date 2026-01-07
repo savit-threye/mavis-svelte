@@ -1,3 +1,4 @@
+import { parseHeader } from '$lib/utils';
 import { io, Socket } from 'socket.io-client';
 
 export interface SocketOptions {
@@ -18,6 +19,7 @@ let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 let dataTimeout: ReturnType<typeof setTimeout> | null = null;
 let isConnected = false;
 let hasReceivedData = false;
+let currentHeader: any = null;
 
 export function connectToSocketServer(options: SocketOptions) {
     const {
@@ -78,6 +80,29 @@ export function connectToSocketServer(options: SocketOptions) {
 
     const handleHeader = (headerData: any) => {
         try {
+
+            const parsedHeader = typeof headerData === 'string' ? parseHeader(headerData) : headerData;
+
+            if (!parsedHeader) {
+                console.error('[Socket] Failed to parse header');
+                onConnectionError?.('Invalid data format received from server.');
+                return;
+            }
+
+            currentHeader = parsedHeader;
+
+            // Extract scenario ID from header title
+            if (parsedHeader.Title) {
+                const parts = parsedHeader.Title.split(':');
+                if (parts.length >= 2) {
+                    const scenarioName = parts[0].trim();
+
+                    // set scenarioname to project title
+                    document.title = scenarioName;
+
+                }
+            }
+
             hasReceivedData = true;
 
             // Clear data timeout

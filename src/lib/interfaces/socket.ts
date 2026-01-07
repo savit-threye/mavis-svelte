@@ -13,3 +13,48 @@ export interface SocketMessage {
 
 export type MessageHandler = (data: SocketMessage) => void;
 export type StatusHandler = (status: SocketStatus) => void;
+
+export interface IHeaderOption {
+    FileType: string;
+    FileVersion: string;
+    ReferenceTime: string;
+    ReferenceLongitude: number;
+    ReferenceLatitude: number;
+    Title?: string;
+}
+
+export interface ICoordOption {
+    Latitude: number;
+    Longitude: number;
+    Altitude: number;
+    Roll: number;
+    Pitch: number;
+    Yaw: number;
+}
+
+
+export interface StaticViewerEntityModel {
+    // id?: string;
+    Name?: string;
+    Type?: string;
+    Color?: string;
+    Shape?: string;
+    Coalition?: string;
+    CallSign?: string;
+    isCgf?: boolean;
+    verticalEngagementRange?: number;
+    engagementRange?: number;
+    model?: string;
+}
+export interface DynamicEntityModel {
+    id?: string;
+    Longitude?: number;
+    Latitude?: number;
+    Altitude?: number;
+    Roll?: number;
+    Pitch?: number;
+    Yaw?: number;
+    Debug?: string;
+    Visible?: boolean;
+    time?: number;
+}
