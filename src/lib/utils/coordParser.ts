@@ -1,4 +1,4 @@
-import type { ICoordOption, IHeaderOption } from "$lib/interfaces";
+import type { ICoordOption, IHeaderOption } from "../interfaces/socket";
 
 
 

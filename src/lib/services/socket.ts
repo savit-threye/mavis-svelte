@@ -1,5 +1,9 @@
+import type { IHeaderOption, SOAHistoryDataRecord, StaticViewerEntityModel } from '$lib/interfaces';
 import { parseHeader } from '$lib/utils';
+import { cachedMeshFinder } from '$lib/utils/cachedMeshFinder';
+import { convertToEntity } from '$lib/utils/merger';
 import { io, Socket } from 'socket.io-client';
+import { entitiesStore, type EntityModel } from '$lib/stores';
 
 export interface SocketOptions {
     url: string;
@@ -15,11 +19,15 @@ export interface SocketOptions {
 }
 
 let socket: Socket | null = null;
+
+// Initialize Web Worker for ACMI parsing
+let acmiWorker: Worker | null = null;
 let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 let dataTimeout: ReturnType<typeof setTimeout> | null = null;
 let isConnected = false;
 let hasReceivedData = false;
 let currentHeader: any = null;
+let startTimeSet: boolean = false;
 
 export function connectToSocketServer(options: SocketOptions) {
     const {
@@ -31,6 +39,40 @@ export function connectToSocketServer(options: SocketOptions) {
         onHeader,
         onData
     } = options;
+
+    try {
+
+        acmiWorker = new Worker(new URL('../workers/acmi.worker.ts', import.meta.url), {
+            type: 'module'
+        });
+
+        // Handle worker messages
+        acmiWorker.onmessage = (event) => {
+            const { type, frames, timestamp, error } = event.data;
+
+            if (type === 'parsed' && frames) {
+                if (error) {
+                    console.error('[Socket] ACMI parsing error:', error);
+                    onConnectionError?.(`Data parsing error: ${error}`);
+                    return;
+                }
+
+
+
+                // Update viewer entities with new entities found in this batch
+                updateViewerEntitiesFromFrames(frames);
+            }
+        };
+
+        acmiWorker.onerror = (error) => {
+            console.error('[Socket] Worker error:', error);
+            onConnectionError?.('Data processing error. Please check console for details.');
+        };
+
+    } catch (error) {
+        console.error('[Socket] Failed to create worker:', error);
+        onConnectionError?.('Failed to initialize data processor. Browser may not support Web Workers.');
+    }
 
     const onConnect = () => {
         isConnected = true;
@@ -122,9 +164,73 @@ export function connectToSocketServer(options: SocketOptions) {
         }
     };
 
+    // Set of properties to skip when creating static entity data
+    const SKIP_DYNAMIC_PROPS = new Set(['id', 'Latitude', 'Longitude', 'Altitude', 'Roll', 'Pitch', 'Yaw', 'Visible', 'time', 'Debug']);
+
+    function updateViewerEntitiesFromFrames(frames: any[]) {
+        const viewerEntities = entitiesStore.getMap();
+        let hasNewEntities = false;
+
+        for (let i = 0; i < frames.length; i++) {
+            const frame = frames[i];
+            const cleanEntityId = frame.id;
+
+            // Skip if entity already exists
+            if (viewerEntities.has(cleanEntityId)) continue;
+
+            // Build static entity data directly
+            const viewerEntityData: any = { id: cleanEntityId };
+
+            for (const key in frame) {
+                if (!SKIP_DYNAMIC_PROPS.has(key) && frame[key] !== undefined) {
+                    viewerEntityData[key] = frame[key];
+                }
+            }
+
+            // Get mesh and model path
+            const mesh: any = cachedMeshFinder(viewerEntityData.Type ?? '', viewerEntityData.Name ?? '');
+            if (mesh?.Shape?.[0]) {
+                const rawPath = mesh.Shape[0].replace(".obj", ".glb");
+                viewerEntityData.model = rawPath.charCodeAt(0) === 47 ? rawPath : `/${rawPath}`;
+            } else {
+                viewerEntityData.model = "";
+            }
+
+            // Add directly to the store's map (silent update)
+            entitiesStore.setEntitySilent(cleanEntityId, viewerEntityData as EntityModel);
+            hasNewEntities = true;
+        }
+
+        // Single notification after all entities are added
+        if (hasNewEntities) {
+            entitiesStore.notify();
+        }
+    }
+
     const handleData = (dataString: string) => {
         try {
-            if (!hasReceivedData) {
+            let batchTimestampSeconds: number = 0;
+            let batchTimestampMs: number | null = null;
+
+
+            const lines = dataString.split('\n');
+
+            if (lines[0].charCodeAt(0) === 35) {
+                const timeParsed = parseTimeTrunc(lines[0]);
+                batchTimestampSeconds = timeParsed.seconds;
+                batchTimestampMs = timeParsed.ms;
+            }
+
+            if (batchTimestampMs == null) return;
+
+            // Calculate full timestamp in milliseconds
+            const offsetTimestamp = (batchTimestampSeconds * 1000) + (batchTimestampMs * 10);
+            const referenceTime = new Date(currentHeader.ReferenceTime).getTime();
+            const fullTimestamp = referenceTime + offsetTimestamp;
+
+            if (!startTimeSet) {
+
+                startTimeSet = true;
                 hasReceivedData = true;
 
                 // Clear data timeout
@@ -133,14 +239,83 @@ export function connectToSocketServer(options: SocketOptions) {
                     dataTimeout = null;
                 }
 
+                // Call success callback on first data
                 onConnectionSuccess?.();
             }
 
-            onData?.(dataString);
+            if (acmiWorker) {
+                // Use Web Worker for parsing
+                acmiWorker.postMessage({
+                    type: 'parse',
+                    data: dataString,
+                    header: currentHeader,
+                    batchTimestamp: fullTimestamp
+                });
+            } else {
+                // Fallback to main thread parsing
+                console.warn('[Socket] Using main thread parsing - performance may be impacted');
+
+                const frames: SOAHistoryDataRecord[] = [];
+
+                for (const trimmedLine of lines) {
+                    if (trimmedLine.charCodeAt(0) === 35) continue;
+
+                    const properties = convertToEntity(trimmedLine, currentHeader);
+                    const cleanEntityId = getCleanEntityId(properties.id!);
+
+                    if (!cleanEntityId || !properties) continue;
+
+                    frames.push({
+                        id: cleanEntityId,
+                        ...properties
+                    });
+                }
+
+                updateViewerEntitiesFromFrames(frames);
+            }
         } catch (error) {
             console.error('[Socket] Error processing data:', error);
+            onConnectionError?.('Error processing incoming data. Stream may be unstable.');
         }
     };
+
+    function getCleanEntityId(id: string) {
+        let result = '';
+        for (let i = 0; i < id.length; i++) {
+            const c = id.charCodeAt(i);
+            if (c !== 45 && c !== 13) { // '-' and '\r'
+                result += id[i];
+            }
+        }
+        return result;
+    }
+
+
+
+    function parseTimeTrunc(line: string) {
+        let i = 1, num = 0, frac = 0, fracDigits = 0, dot = false;
+        while (i < line.length) {
+            const ch = line.charCodeAt(i);
+            if (ch === 46) { // '.'
+                dot = true;
+            } else if (ch >= 48 && ch <= 57) {
+                const digit = ch - 48;
+                if (!dot) {
+                    num = num * 10 + digit;
+                } else if (fracDigits < 2) {
+                    frac = frac * 10 + digit;
+                    fracDigits++;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+            i++;
+        }
+        if (fracDigits === 1) frac *= 10;
+        return { seconds: num, ms: frac };
+    }
 
     const onError = (error: any) => {
         console.error('[Socket] Socket error:', error);

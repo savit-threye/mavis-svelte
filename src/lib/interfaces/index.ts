@@ -8,7 +8,8 @@ export type {
     IHeaderOption,
     StaticViewerEntityModel,
     DynamicEntityModel,
-    ICoordOption
+    ICoordOption,
+    IPropertiesOption
 } from './socket';
 
 // Cesium interfaces
@@ -16,3 +17,5 @@ export type { IBox, IEntity, ILabel, IModel, IPoint, IPolyline } from './cesium'
 
 // Viewer interfaces
 export type { SimConfig, ViewMode } from './viewer';
+
+export type { SOAHistoryDataRecord } from './media-player';

@@ -58,3 +58,10 @@ export interface DynamicEntityModel {
     Visible?: boolean;
     time?: number;
 }
+
+export interface IPropertiesOption {
+    class: any;
+    attribute: any;
+    basic: any;
+    specific: any;
+}
